@@ -3,10 +3,9 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 local Window = Rayfield:CreateWindow({
     Name = "EzzBss",
     LoadingTitle = "EzzBss",
-    LoadingSubtitle = "by Solvibe and Memzad Prime",
+    LoadingSubtitle = "by Solvibe & Memzad Prime",
     ToggleUIKeybind = "K",
-    ConfigurationSaving = {Enabled = false},
-    KeySystem = false
+    ConfigurationSaving = {Enabled = false}
 })
 
 local home = Window:CreateTab("Home", 127099021069839)
@@ -17,78 +16,77 @@ local Services = {
     Players = game:GetService("Players"),
     TeleportService = game:GetService("TeleportService"),
     HttpService = game:GetService("HttpService"),
-    GuiService = game:GetService("GuiService")
+    GuiService = game:GetService("GuiService"),
+    RunService = game:GetService("RunService")
 }
 
 local player = Services.Players.LocalPlayer
 local userId = player.UserId
 
 local State = {
-    targetPlayerName = nil,
+    targetPlayerName = "",
     isTargetEnabled = false,
-    reconnectTime = 5 * 3600,
+    reconnectTime = 18000, -- 5h
     endTime = 0,
     timerRunning = false,
-    selectedConfig = nil,
-    lastSliderValue = 5
+    selectedConfig = nil
 }
 
 local Elements = {}
+local timerConnection = nil
 
--- Timer task (optimized single spawn, referenceable)
-local timerTask = nil
+local function rejoin()
+    Services.TeleportService:Teleport(game.PlaceId, player)
+end
+
 local function startTimer()
     State.endTime = os.time() + State.reconnectTime
     State.timerRunning = true
-    if timerTask then timerTask:Disconnect() end
-    timerTask = game:GetService("RunService").Heartbeat:Connect(function()
+    if timerConnection then timerConnection:Disconnect() end
+    timerConnection = Services.RunService.Heartbeat:Connect(function()
         if os.time() >= State.endTime then
-            Services.TeleportService:Teleport(game.PlaceId, player)
+            rejoin()
         end
     end)
 end
 
 local function stopTimer()
     State.timerRunning = false
-    if timerTask then
-        timerTask:Disconnect()
-        timerTask = nil
+    if timerConnection then
+        timerConnection:Disconnect()
+        timerConnection = nil
     end
 end
 
--- Error rejoin
-Services.GuiService.ErrorMessageChanged:Connect(function(errorMsg)
-    if errorMsg and errorMsg ~= "" then
+-- Error handler
+Services.GuiService.ErrorMessageChanged:Connect(function(msg)
+    if msg and msg ~= "" then
         task.wait(0.1)
-        Services.TeleportService:Teleport(game.PlaceId, player)
+        rejoin()
     end
 end)
 
--- UI Elements
+-- Slider (no Flag)
 Elements.Slider = home:CreateSlider({
     Name = "Restart Time",
     Range = {1, 24},
     Increment = 1,
     Suffix = "Hours",
     CurrentValue = 5,
-    Flag = "RestartTimeSlider",
     Callback = function(Value)
-        State.lastSliderValue = Value
         State.reconnectTime = Value * 3600
-        if State.timerRunning then
-            startTimer()
-        end
+        if State.timerRunning then startTimer() end
         SaveConfig()
     end
 })
 
+-- Target dropdown (no Flag)
 Elements.DropdownTarget = alt:CreateDropdown({
     Name = "Target Player",
     Options = {},
-    CurrentOption = {""},
-    Flag = "PlayerInServer",
+    CurrentOption = "---",
     Callback = function(Options)
-        State.targetPlayerName = Options[1]
+        State.targetPlayerName = Options[1] or ""
         SaveConfig()
     end
 })
@@ -96,18 +94,17 @@ Elements.DropdownTarget = alt:CreateDropdown({
 Elements.ToggleTarget = alt:CreateToggle({
     Name = "Target Player",
     CurrentValue = false,
-    Flag = "ToggleRestartAlt",
     Callback = function(Value)
         State.isTargetEnabled = Value
         SaveConfig()
     end
 })
 
--- Player list update (debounced)
-local playerDebounce = false
-local function updatePlayerList()
-    if playerDebounce then return end
-    playerDebounce = true
+-- Player updates
+local debounce = false
+local function updatePlayers()
+    if debounce then return end
+    debounce = true
     task.wait(0.1)
     local names = {}
     for _, p in Services.Players:GetPlayers() do
@@ -116,31 +113,32 @@ local function updatePlayerList()
         end
     end
     Elements.DropdownTarget:Refresh(names, true)
-    playerDebounce = false
+    debounce = false
 end
 
-updatePlayerList()
-Services.Players.PlayerAdded:Connect(updatePlayerList)
+updatePlayers()
+Services.Players.PlayerAdded:Connect(updatePlayers)
 Services.Players.PlayerRemoving:Connect(function(removed)
-    updatePlayerList()
+    updatePlayers()
     if State.isTargetEnabled and removed.Name == State.targetPlayerName then
         task.wait(0.5)
-        Services.TeleportService:Teleport(game.PlaceId, player)
+        rejoin()
     end
 end)
 
--- Config system (optimized, single folder check)
+-- Config folder
 local configFolder = "EzzBss"
 if not isfolder(configFolder) then makefolder(configFolder) end
 
-local lastUsedFile = configFolder .. "\\last_used_" .. userId .. ".txt"
+local lastUsedFile = configFolder .. "\\last_" .. userId .. ".txt"
 
-local function getConfigFiles()
+local function listConfigs()
     local files = {}
-    for _, path in listfiles(configFolder) do
+    local listed = listfiles(configFolder)
+    for _, path in listed do
         if path:match("%.rfld$") then
             local name = path:match("([^/\\]+)%.rfld$")
-            if name then table.insert(files, name) end
+            if name then files[#files+1] = name end
         end
     end
     table.sort(files)
@@ -148,118 +146,115 @@ local function getConfigFiles()
 end
 
 local function getNextPreset()
-    local files = getConfigFiles()
-    local maxIdx = 0
-    for _, name in files do
-        local idx = tonumber(name:match("^Preset (%d+)$"))
-        if idx and idx > maxIdx then maxIdx = idx end
+    local maxNum = 0
+    for _, name in listConfigs() do
+        local num = tonumber(name:match("^Preset (%d+)$"))
+        if num and num > maxNum then maxNum = num end
     end
-    return "Preset " .. (maxIdx + 1)
+    return "Preset " .. (maxNum + 1)
 end
 
-local function saveLastUsed()
-    if State.selectedConfig then
-        writefile(lastUsedFile, State.selectedConfig)
-    end
+local function saveLastUsed(name)
+    pcall(writefile, lastUsedFile, name or "")
 end
 
 local function loadLastUsed()
-    if isfile(lastUsedFile) then
-        return readfile(lastUsedFile):match("^%s*(.-)%s*$")
-    end
+    local content = pcall(readfile, lastUsedFile)
+    return type(content) == "string" and content:match("^%s*(.-)%s*$") or nil
 end
 
-local function getCurrentConfig()
+local function getConfigData()
     return {
-        RestartTimeSlider = State.lastSliderValue,
-        PlayerInServer = {State.targetPlayerName or ""},
-        ToggleRestartAlt = State.isTargetEnabled
+        time = State.reconnectTime / 3600,
+        target = State.targetPlayerName,
+        targetEnabled = State.isTargetEnabled
     }
 end
 
 function SaveConfig()
     if not State.selectedConfig then return end
     local path = configFolder .. "\\" .. State.selectedConfig .. ".rfld"
-    writefile(path, Services.HttpService:JSONEncode(getCurrentConfig()))
+    pcall(writefile, path, Services.HttpService:JSONEncode(getConfigData()))
 end
 
+-- Config dropdown (no Flag)
 Elements.DropdownConfig = config:CreateDropdown({
-    Name = "Select Config",
-    Options = getConfigFiles(),
-    CurrentOption = {""},
-    Flag = "Config",
+    Name = "Preset",
+    Options = listConfigs(),
+    CurrentOption = "---",
     Callback = function(Options)
-        State.selectedConfig = Options[1]
-        saveLastUsed()
+        State.selectedConfig = Options[1] or nil
+        saveLastUsed(State.selectedConfig)
     end
 })
 
 config:CreateButton({
-    Name = "Create Config",
+    Name = "New Preset",
     Callback = function()
-        local preset = getNextPreset()
-        local path = configFolder .. "\\" .. preset .. ".rfld"
-        writefile(path, Services.HttpService:JSONEncode({
-            RestartTimeSlider = 5,
-            PlayerInServer = {""},
-            ToggleRestartAlt = false
-        }))
-        local files = getConfigFiles()
+        local name = getNextPreset()
+        local path = configFolder .. "\\" .. name .. ".rfld"
+        pcall(writefile, path, Services.HttpService:JSONEncode(getConfigData()))
+        local files = listConfigs()
         Elements.DropdownConfig:Refresh(files, true)
-        Elements.DropdownConfig:Set({preset})
-        State.selectedConfig = preset
-        saveLastUsed()
-        LoadConfig(preset)
+        Elements.DropdownConfig:Set({name})
+        State.selectedConfig = name
+        saveLastUsed(name)
     end
 })
 
 config:CreateButton({
-    Name = "Apply Config",
+    Name = "Load Preset",
     Callback = function()
-        if State.selectedConfig then LoadConfig(State.selectedConfig) end
+        LoadConfig(State.selectedConfig)
     end
 })
 
 function LoadConfig(name)
+    if not name then return end
     local path = configFolder .. "\\" .. name .. ".rfld"
     if not isfile(path) then return end
-    State.selectedConfig = name
-    Elements.DropdownConfig:Set({name})
-    saveLastUsed()
-    local success, data = pcall(Services.HttpService.JSONDecode, Services.HttpService, readfile(path))
+    
+    local success, json = pcall(readfile, path)
     if success then
-        if data.RestartTimeSlider then
-            Elements.Slider:Set(data.RestartTimeSlider)
-            State.lastSliderValue = data.RestartTimeSlider
-            State.reconnectTime = data.RestartTimeSlider * 3600
+        local ok, data = pcall(Services.HttpService.JSONDecode, Services.HttpService, json)
+        if ok then
+            State.selectedConfig = name
+            Elements.DropdownConfig:Set({name})
+            saveLastUsed(name)
+            
+            if data.time then
+                Elements.Slider:Set(data.time)
+                State.reconnectTime = data.time * 3600
+            end
+            if data.target then
+                Elements.DropdownTarget:Set({data.target})
+                State.targetPlayerName = data.target
+            end
+            if data.targetEnabled ~= nil then
+                Elements.ToggleTarget:Set(data.targetEnabled)
+                State.isTargetEnabled = data.targetEnabled
+            end
+            
+            if State.timerRunning then startTimer() end
+            return
         end
-        if data.PlayerInServer and data.PlayerInServer[1] then
-            Elements.DropdownTarget:Set(data.PlayerInServer)
-            State.targetPlayerName = data.PlayerInServer[1]
-        end
-        if data.ToggleRestartAlt ~= nil then
-            Elements.ToggleTarget:Set(data.ToggleRestartAlt)
-            State.isTargetEnabled = data.ToggleRestartAlt
-        end
-        if State.timerRunning then startTimer() end
-        SaveConfig()
+    end
+    -- Fallback
+    Rayfield:Notify({Title = "Error", Content = "Failed to load " .. name, Duration = 3})
+end
+
+-- Auto-init
+local configs = listConfigs()
+if #configs > 0 then
+    Elements.DropdownConfig:Refresh(configs, true)
+    local last = loadLastUsed()
+    if last and table.find(configs, last) then
+        LoadConfig(last)
+    else
+        Elements.DropdownConfig:Set({configs[1]})
+        State.selectedConfig = configs[1]
     end
 end
 
--- Init configs
-local files = getConfigFiles()
-if #files == 0 then
-    local preset = "Preset 1"
-    writefile(configFolder .. "\\" .. preset .. ".rfld", Services.HttpService:JSONEncode({
-        RestartTimeSlider = 5, PlayerInServer = {""}, ToggleRestartAlt = false
-    }))
-    files = getConfigFiles()
-end
-Elements.DropdownConfig:Refresh(files, true)
-
-local lastUsed = loadLastUsed()
-local initConfig = lastUsed and table.find(files, lastUsed) and lastUsed or files[1] or "Preset 1"
-LoadConfig(initConfig)
-
--- Initial timer setup
+-- Start timer
 startTimer()
