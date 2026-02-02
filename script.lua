@@ -98,7 +98,7 @@ Slider = home:CreateSlider({
 local reconnectTime = 0
 local endTime = 0
 local timerRunning = false
-local previousSliderValue = 5 -- Храним предыдущее значение
+local previousSliderValue = 5
 
 local function restartTimerFromNow()
     if reconnectTime > 0 then
@@ -118,18 +118,13 @@ local function adjustTimer(newValue)
         local now = os.time()
         local remainingSeconds = endTime - now
         
-        -- Вычисляем разницу между новым и старым значением (в секундах)
         local difference = (newValue - previousSliderValue) * 3600
-        
-        -- Добавляем/вычитаем разницу к оставшемуся времени
         local newRemainingSeconds = remainingSeconds + difference
         
-        -- Проверяем, чтобы не было отрицательного времени
         if newRemainingSeconds < 0 then
             newRemainingSeconds = 0
         end
         
-        -- Устанавливаем новое время окончания
         endTime = now + newRemainingSeconds
         reconnectTime = newValue * 3600
         
@@ -137,7 +132,6 @@ local function adjustTimer(newValue)
         local minutes = math.floor((newRemainingSeconds % 3600) / 60)
         print(string.format("[Timer] Adjusted! Time left: %d hours %d minutes", hours, minutes))
     else
-        -- Если таймер не запущен, просто запускаем его
         reconnectTime = newValue * 3600
         restartTimerFromNow()
     end
@@ -145,7 +139,25 @@ local function adjustTimer(newValue)
     previousSliderValue = newValue
 end
 
--- Основной таймер
+-- Создаем кнопку заранее
+local timeleft = home:CreateButton({
+    Name = "Time left: Calculating...",
+    Callback = function()
+        -- Можно добавить действие при клике, например показать точное время
+        if timerRunning then
+            local now = os.time()
+            local remaining = endTime - now
+            if remaining > 0 then
+                local hours = math.floor(remaining / 3600)
+                local minutes = math.floor((remaining % 3600) / 60)
+                local seconds = remaining % 60
+                print(string.format("[Timer] Exact time left: %d hours, %d minutes, %d seconds", hours, minutes, seconds))
+            end
+        end
+    end,
+})
+
+-- Основной таймер с обновлением кнопки
 task.spawn(function()
     while true do
         task.wait(1)
@@ -153,11 +165,34 @@ task.spawn(function()
             local now = os.time()
             local remaining = endTime - now
             
-            -- Показываем оставшееся время каждые 60 секунд
-            if remaining % 60 == 0 and remaining > 0 then
+            -- Обновляем текст кнопки
+            if remaining > 0 then
                 local hours = math.floor(remaining / 3600)
                 local minutes = math.floor((remaining % 3600) / 60)
-                print(string.format("[Timer] Time left: %d hours %d minutes", hours, minutes))
+                
+                if hours >= 1 then
+                    -- Показываем часы если >= 1 часа
+                    if minutes > 0 then
+                        timeleft:Set("Time left: " .. hours .. "h " .. minutes .. "m")
+                    else
+                        timeleft:Set("Time left: " .. hours .. "h")
+                    end
+                else
+                    -- Показываем только минуты если < 1 часа
+                    if minutes > 0 then
+                        timeleft:Set("Time left: " .. minutes .. "m")
+                    else
+                        local seconds = remaining % 60
+                        timeleft:Set("Time left: " .. seconds .. "s")
+                    end
+                end
+                
+                -- Логи каждую минуту
+                if remaining % 60 == 0 then
+                    print(string.format("[Timer] Time left: %d hours %d minutes", hours, minutes))
+                end
+            else
+                timeleft:Set("Time left: Restarting...")
             end
             
             if now >= endTime then
@@ -165,6 +200,8 @@ task.spawn(function()
                 TeleportService:Teleport(game.PlaceId, player)
                 break
             end
+        else
+            timeleft:Set("Time left: Timer inactive")
         end
     end
 end)
@@ -183,18 +220,17 @@ end
 
 GuiService.ErrorMessageChanged:Connect(onErrorMessageChanged)
 
--- ВАЖНО: Обновляем callback слайдера
+-- Обновляем callback слайдера
 Slider.Callback = function(Value)
     lastSliderValue = Value
-    adjustTimer(Value) -- Используем новую функцию
+    adjustTimer(Value)
     SaveCurrentConfig()
 end
 
--- Запускаем таймер при старте скрипта с начальным значением
+-- Запускаем таймер при старте
 previousSliderValue = Slider.CurrentValue
 reconnectTime = Slider.CurrentValue * 3600
 restartTimerFromNow()
-
 
 DropdownTargetPlayer = alt:CreateDropdown({
     Name = "TargetPlayer",
