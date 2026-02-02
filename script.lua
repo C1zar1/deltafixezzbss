@@ -127,7 +127,7 @@ Services.Players.PlayerRemoving:Connect(function(removed)
 end)
 
 -- Config folder
-local configFolder = "EzzBss"
+local configFolder = "/EzzBss"
 if not isfolder(configFolder) then makefolder(configFolder) end
 
 local lastUsedFile = configFolder .. "\\last_" .. userId .. ".txt"
